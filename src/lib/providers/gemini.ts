@@ -47,29 +47,58 @@ export class GeminiVisionExtractor implements VisionExtractor {
     }
 
     const url = `https://generativelanguage.googleapis.com/v1beta/models/${this.model}:generateContent?key=${this.apiKey}`;
+    const maxRateLimitRetries = 3;
+    let delayMs = 3000;
 
-    let response: Response;
-    try {
-      response = await fetch(url, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          contents: [{ parts }],
-          generationConfig: {
-            responseMimeType: "application/json",
-            temperature: 0.1,
-          },
-        }),
-      });
-    } catch (networkErr: any) {
-      throw new Error(
-        `Failed to connect to Gemini API. Please check your internet connection. (${networkErr.message})`
-      );
-    }
+    for (let attempt = 0; attempt <= maxRateLimitRetries; attempt++) {
+      let response: Response;
+      try {
+        response = await fetch(url, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            contents: [{ parts }],
+            generationConfig: {
+              responseMimeType: "application/json",
+              temperature: 0.1,
+            },
+          }),
+        });
+      } catch (networkErr: any) {
+        throw new Error(
+          `Failed to connect to Gemini API. Please check your internet connection. (${networkErr.message})`
+        );
+      }
 
-    if (!response.ok) {
+      if (response.ok) {
+        const data = await response.json();
+        const text = data.candidates?.[0]?.content?.parts?.[0]?.text;
+        if (!text) {
+          const finishReason = data.candidates?.[0]?.finishReason;
+          if (finishReason === "SAFETY") {
+            throw new Error(
+              "Gemini blocked the response due to safety filters. The uploaded document may contain content that triggered Google's safety policies."
+            );
+          }
+          throw new Error(
+            "Gemini API returned an empty response. The document may not contain extractable content, or the model could not process it."
+          );
+        }
+        return text;
+      }
+
       const errorData = await response.json().catch(() => ({}));
       const errorMsg = errorData.error?.message || response.statusText;
+
+      // Handle 429 Rate Limits and 503 Server Overload with automatic backoff retry
+      if ((response.status === 429 || response.status === 503) && attempt < maxRateLimitRetries) {
+        console.warn(
+          `[Gemini API] Rate limit / server busy (${response.status}). Retrying attempt ${attempt + 1}/${maxRateLimitRetries} in ${delayMs}ms...`
+        );
+        await new Promise((resolve) => setTimeout(resolve, delayMs));
+        delayMs += 3000;
+        continue;
+      }
 
       if (response.status === 400) {
         throw new Error(`Gemini API rejected the request: ${errorMsg}`);
@@ -83,7 +112,7 @@ export class GeminiVisionExtractor implements VisionExtractor {
         );
       } else if (response.status === 429) {
         throw new Error(
-          `Gemini API rate limit exceeded. Please wait a moment and try again, or check your API quota.`
+          `Gemini API rate limit exceeded. Google Gemini free/standard tier quota limits requests per minute. Please wait 10-15 seconds and click "Retry Processing".`
         );
       } else if (response.status >= 500) {
         throw new Error(
@@ -94,20 +123,7 @@ export class GeminiVisionExtractor implements VisionExtractor {
       }
     }
 
-    const data = await response.json();
-    const text = data.candidates?.[0]?.content?.parts?.[0]?.text;
-    if (!text) {
-      const finishReason = data.candidates?.[0]?.finishReason;
-      if (finishReason === "SAFETY") {
-        throw new Error(
-          "Gemini blocked the response due to safety filters. The uploaded document may contain content that triggered Google's safety policies."
-        );
-      }
-      throw new Error(
-        "Gemini API returned an empty response. The document may not contain extractable content, or the model could not process it."
-      );
-    }
-    return text;
+    throw new Error("Gemini API request failed after rate limit retries.");
   }
 
   /**
