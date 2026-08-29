@@ -1,0 +1,124 @@
+================================================================================
+VEDAAI — PRODUCTION-GRADE ARCHITECTURAL OPTIMIZATION PLAN
+"Enterprise Scaling with Redis, Kafka, Job Queues & Distributed Workers"
+================================================================================
+
+1. EXECUTIVE OVERVIEW
+--------------------------------------------------------------------------------
+To transition VedaAI from an in-memory prototype to an enterprise-grade, 
+horizontally scalable system handling thousands of concurrent assessment 
+uploads, we replace synchronous in-memory processing with an event-driven 
+distributed micro-architecture powered by Redis, Apache Kafka, and BullMQ.
+
+
+2. ARCHITECTURE DIAGRAM & DATA FLOW
+--------------------------------------------------------------------------------
+
+  [Client / Web UI]
+         │
+         │ 1. Upload Files (Multipart Data / Stream)
+         ▼
+  [Next.js API Gateway / Edge] ───► [Local Memory / Node.js Buffers / Temp Disk (/tmp)]
+         │                               │
+         │ 2. Enqueue Job                │ (Cross-worker binary chunks via Redis / DB)
+         ▼                               ▼
+  [Redis / BullMQ Queue] ◄──────► [Kafka Message Bus]
+         │                               │
+         │ 3. Distribute Pipeline Stages │ (Event Telemetry & Audit Logs)
+         ▼                               ▼
+  [Worker Nodes (Node.js/Python)] ──► [Google Gemini 3.6 Flash API] (Base64 In-Memory)
+         │
+         │ 4. Persist Results & Binary Cache
+         ▼
+  [PostgreSQL / Prisma (BYTEA)] + [Redis Cache (Binary/TTL)]
+         │
+         │ 5. Real-time Progress (WebSockets / Socket.io)
+         ▼
+  [Client Workspace Dashboard]
+
+
+3. CORE COMPONENTS & RESPONSIBILITIES
+--------------------------------------------------------------------------------
+
+A. STORAGE LAYER (Local Memory / RAM Buffers + Redis/DB Binary Storage)
+   - Process raw uploaded PDFs and rasterized page images in local server memory 
+     (Node.js RAM `Buffer` / temporary local filesystem storage `/tmp`).
+   - For multi-worker distributed architectures without cloud object storage: 
+     Temporarily store rasterized page image chunks in Redis (binary RAM cache with 
+     short TTL, e.g. 1 hour) or PostgreSQL (`BYTEA` binary column in AnswerSheets table).
+   - Serve page previews and document renders directly through authenticated 
+     Next.js API binary streaming endpoints from Local RAM / Redis / DB.
+
+B. ASYNC JOB QUEUE (Redis + BullMQ)
+   - Decouple API requests from heavy AI processing.
+   - Job Queues:
+     * `pdf-rasterization-queue`: Converts PDF pages into optimized WebP/PNG images.
+     * `question-extraction-queue`: Sends page batches to Gemini Vision AI.
+     * `answer-segmentation-queue`: Detects handwritten regions & bounding boxes.
+     * `mapping-grading-queue`: Performs batched answer mapping & AI scoring.
+   - Automatic retries with exponential backoff (e.g. rate-limit handling).
+   - Dead Letter Queue (DLQ) for failed or corrupted document inspection.
+
+C. EVENT BUS & TELEMETRY (Apache Kafka)
+   - Topic `assessment.events`: Broadcasts real-time stage progress updates.
+   - Topic `assessment.audit`: Stores immutable logs of grading results, model 
+     latency, token usage, and user corrections.
+   - Topic `assessment.metrics`: Feeds Prometheus/Grafana dashboards.
+
+D. PERSISTENCE & CACHING (PostgreSQL + Redis)
+   - PostgreSQL (Prisma ORM): Primary database storing Users, Classrooms, 
+     Exams, Questions, AnswerSheets (including binary document data / BYTEA), 
+     Mappings, and Grades.
+   - Redis Cache: Stores session state, rate-limiting tokens, binary page chunk 
+     buffers (for cross-node worker distribution), and hot assessment workspace 
+     data with 24-hour TTL.
+
+E. REAL-TIME PROGRESS STREAMING (WebSockets / Socket.io)
+   - Replaces SSE with two-way WebSocket connections backed by Redis Pub/Sub.
+   - Allows instant progress updates across multiple open browser tabs.
+
+
+4. PIPELINE STAGE OPTIMIZATIONS
+--------------------------------------------------------------------------------
+
+Stage 1: Parallel PDF Page Chunking
+- Split multi-page answer sheets (e.g. 50 pages) into 5-page chunks in RAM memory.
+- Store chunk image buffers in Redis binary cache or local worker RAM.
+- Process chunks in parallel across worker nodes to reduce processing time 
+  from minutes to seconds.
+
+Stage 2: Single-Call Batched Vision Inference (In-Memory Base64)
+- Group extracted questions and transcribed student responses into a single 
+  unified JSON prompt for Gemini 3.6 Flash.
+- Pass page image buffers directly as base64 inlineData payloads from local RAM, 
+  eliminating the need for public or signed S3 URLs.
+- Reduces API calls by 80% and eliminates rate-limit bottlenecking.
+
+Stage 3: Token Bucket Rate Limiter
+- Implement a Redis-backed Token Bucket rate limiter in worker processes to 
+  strictly enforce Google Gemini API quota limits (RPM/TPM).
+
+
+5. RESILIENCY, MONITORING & SECURITY
+--------------------------------------------------------------------------------
+
+- Circuit Breaker Pattern: Automatically pauses job consumption if external AI 
+  APIs experience outage or elevated error rates.
+- Idempotency Keys: Ensures re-submitting an upload never produces duplicate 
+  database records or redundant AI calls.
+- Security & Compliance: Encryption at rest (AES-256) and in transit (TLS 1.3) 
+  for student handwritten documents.
+
+
+6. DEPLOYMENT & SCALING TARGETS
+--------------------------------------------------------------------------------
+- Gateway: Next.js Server / Container Runtime (Node.js RAM Buffer support)
+- Workers: Kubernetes (EKS/GKE) or ECS Fargate with local ephemeral volume mounts (`/tmp`)
+- Queue/Cache: Managed Upstash Redis or AWS ElastiCache (Binary Cache Enabled)
+- Message Bus: Managed Confluent Cloud Kafka or AWS MSK
+- DB: AWS Aurora PostgreSQL (BYTEA Storage Enabled)
+- Storage: Local RAM / Mount Volumes / DB & Redis binary chunking (No S3/R2)
+
+================================================================================
+STATUS: Plan ready for enterprise production implementation.
+================================================================================
