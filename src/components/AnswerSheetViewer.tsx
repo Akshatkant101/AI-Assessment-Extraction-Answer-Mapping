@@ -197,11 +197,17 @@ export function AnswerSheetViewer({
               return ans.segments.map((seg, idx) => {
                 if (seg.pageIndex !== currentPageIndex) return null;
 
+                let { x, y, w, h } = seg.bbox || { x: 0.05, y: 0.1 + idx * 0.15, w: 0.9, h: 0.15 };
+                if (x > 1) x = x / 1000;
+                if (y > 1) y = y / 1000;
+                if (w > 1) w = w / 1000;
+                if (h > 1) h = h / 1000;
+
                 const style = {
-                  left: `${seg.bbox.x * 100}%`,
-                  top: `${seg.bbox.y * 100}%`,
-                  width: `${seg.bbox.w * 100}%`,
-                  height: `${seg.bbox.h * 100}%`,
+                  left: `${Math.max(0, Math.min(0.95, x)) * 100}%`,
+                  top: `${Math.max(0, Math.min(0.95, y)) * 100}%`,
+                  width: `${Math.max(0.05, Math.min(1, w)) * 100}%`,
+                  height: `${Math.max(0.03, Math.min(1, h)) * 100}%`,
                 };
 
                 return (
