@@ -1,0 +1,7 @@
+# GitHub Linguist Overrides
+# Exclude pre-compiled/vendor PDF.js worker files and config files from repository language stats
+public/pdf.worker.mjs linguist-vendored
+public/pdf.worker.min.mjs linguist-vendored
+public/*.mjs linguist-vendored
+eslint.config.mjs linguist-vendored
+postcss.config.mjs linguist-vendored
