@@ -39,3 +39,9 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# secret agents & mcp configs
+.agents/
+.gemini/
+debug_log.txt
+
